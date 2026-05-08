@@ -2,6 +2,7 @@ FROM node:20-bookworm-slim
 
 ARG DEBIAN_FRONTEND=noninteractive
 ARG GO_VERSION=""
+ARG CODEX_VERSION=latest
 
 ENV RUSTUP_HOME=/usr/local/rustup \
     CARGO_HOME=/usr/local/cargo \
@@ -127,7 +128,8 @@ RUN set -eux; \
 # Node 常用包管理器 + Codex
 RUN set -eux; \
     corepack enable; \
-    npm i -g @openai/codex@latest; \
+    npm i -g "@openai/codex@${CODEX_VERSION}"; \
+    codex --version; \
     npm cache clean --force
 
 WORKDIR /workspace
