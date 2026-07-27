@@ -20,6 +20,7 @@ permissions:
 
 env:
   IMAGE_NAME: codex-cli
+  PLAYWRIGHT_VERSION: "1.62.0"
 
 jobs:
   build:
@@ -32,15 +33,48 @@ jobs:
       - name: Resolve Codex version
         id: codex
         shell: bash
+        env:
+          INPUT_VERSION: ${{ github.event.inputs.codex_version }}
         run: |
-          INPUT_VERSION="${{ github.event.inputs.codex_version }}"
           if [ -z "$INPUT_VERSION" ] || [ "$INPUT_VERSION" = "latest" ]; then
             VERSION="$(npm view @openai/codex version)"
           else
             VERSION="$INPUT_VERSION"
           fi
+
+          PUBLISH_CHANNELS=false
+          PUBLISH_LATEST=false
+          if [ "$GITHUB_REF" = "refs/heads/main" ]; then
+            PUBLISH_CHANNELS=true
+            if [ "$GITHUB_EVENT_NAME" != "workflow_dispatch" ] ||
+               [ -z "$INPUT_VERSION" ] ||
+               [ "$INPUT_VERSION" = "latest" ]; then
+              PUBLISH_LATEST=true
+            fi
+          fi
+
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "publish_channels=$PUBLISH_CHANNELS" >> "$GITHUB_OUTPUT"
+          echo "publish_latest=$PUBLISH_LATEST" >> "$GITHUB_OUTPUT"
           echo "Using Codex version: $VERSION"
+
+      - name: Generate image metadata
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=build-${{ github.run_id }}-${{ github.run_attempt }},priority=1100
+            type=schedule,pattern=weekly-{{date 'YYYYMMDD'}}
+            type=raw,value=latest,enable=${{ steps.codex.outputs.publish_latest }}
+            type=raw,value=codex-${{ steps.codex.outputs.version }},enable=${{ steps.codex.outputs.publish_channels }}
+            type=raw,value=codex-${{ steps.codex.outputs.version }}-playwright-${{ env.PLAYWRIGHT_VERSION }},enable=${{ steps.codex.outputs.publish_channels }}
+            type=sha,format=long,prefix=sha-,enable=${{ github.event_name == 'push' }}
+          labels: |
+            org.opencontainers.image.title=Codex CLI development image
+            org.opencontainers.image.description=Codex CLI with Node.js, Playwright, Chromium, Go, Rust, Python, and Java
+            io.github.ninjayo.codex.version=${{ steps.codex.outputs.version }}
+            io.github.ninjayo.playwright.version=${{ env.PLAYWRIGHT_VERSION }}
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
@@ -60,9 +94,10 @@ jobs:
           platforms: linux/amd64
           build-args: |
             CODEX_VERSION=${{ steps.codex.outputs.version }}
-          tags: |
-            ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:latest
-            ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:codex-${{ steps.codex.outputs.version }}
-            ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:sha-${{ github.sha }}
+            PLAYWRIGHT_VERSION=${{ env.PLAYWRIGHT_VERSION }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          pull: true
+          no-cache: ${{ github.event_name == 'schedule' }}
           cache-from: type=registry,ref=${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:buildcache
           cache-to: type=registry,ref=${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:buildcache,mode=max
