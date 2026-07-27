@@ -1,12 +1,14 @@
-FROM node:20-bookworm-slim
+FROM node:24-bookworm-slim
 
 ARG DEBIAN_FRONTEND=noninteractive
 ARG GO_VERSION=""
 ARG CODEX_VERSION=latest
+ARG PLAYWRIGHT_VERSION=1.62.0
 
 ENV RUSTUP_HOME=/usr/local/rustup \
     CARGO_HOME=/usr/local/cargo \
     GOPATH=/go \
+    PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
     PATH=/usr/local/go/bin:/usr/local/cargo/bin:/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
     LANG=C.UTF-8 \
     LC_ALL=C.UTF-8
@@ -125,7 +127,18 @@ RUN set -eux; \
     cargo clippy --version; \
     rm -rf "${CARGO_HOME}/registry" "${CARGO_HOME}/git"
 
-# Node 常用包管理器 + Codex
+# Playwright and Chromium.
+RUN set -eux; \
+    npm i -g "@playwright/test@${PLAYWRIGHT_VERSION}"; \
+    playwright install --with-deps chromium; \
+    case "$(node --version)" in v24.*) ;; *) exit 1 ;; esac; \
+    test "$(playwright --version)" = "Version ${PLAYWRIGHT_VERSION}"; \
+    NODE_PATH="$(npm root -g)" node -e 'const { chromium } = require("@playwright/test"); (async () => { const browser = await chromium.launch({ headless: true }); console.log(await browser.version()); await browser.close(); })().catch(error => { console.error(error); process.exit(1); });'; \
+    chmod -R a+rX "${PLAYWRIGHT_BROWSERS_PATH}"; \
+    npm cache clean --force; \
+    rm -rf /var/lib/apt/lists/*
+
+# Node package managers and Codex.
 RUN set -eux; \
     corepack enable; \
     npm i -g "@openai/codex@${CODEX_VERSION}"; \
